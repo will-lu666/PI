@@ -14,6 +14,8 @@
 #include "p4/tmp/device.grpc.pb.h"
 #include "google/rpc/code.pb.h"
 
+#include "pi_server.h"
+
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
@@ -32,7 +34,7 @@ DeviceMgr *device_mgr = nullptr;
 class StreamChannelClientMgr;
 StreamChannelClientMgr *packet_in_mgr = nullptr;
 
-// #define DEBUG
+#define DEBUG
 
 #ifdef DEBUG
 #define ENABLE_SIMPLELOG true
@@ -457,10 +459,41 @@ void RunServer() {
   if (generator) delete generator;
 }
 
-int main(int argc, char** argv) {
-  DeviceMgr::init(256);
-  RunServer();
-  DeviceMgr::destroy();
+struct ServerData {
+  std::string server_address{"0.0.0.0:50051"};
+  DeviceService device_service;
+  P4RuntimeHybridService pi_service;
+  ServerBuilder builder;
+  std::unique_ptr<Server> server;
+  // StreamChannelClientMgr *packet_in_mgr;
+  std::thread packetin_thread;
+  std::unique_ptr<ServerCompletionQueue> cq_;
+};
 
-  return 0;
+static ServerData *server_data;
+
+extern "C" {
+
+void PIGrpcRunServerLib() {
+  server_data = new ServerData();
+  auto &builder = server_data->builder;
+  builder.AddListeningPort(
+    server_data->server_address, grpc::InsecureServerCredentials());
+  builder.RegisterService(&server_data->device_service);
+  builder.RegisterService(&server_data->pi_service);
+  server_data->cq_ = builder.AddCompletionQueue();
+
+  server_data->server = builder.BuildAndStart();
+  std::cout << "Server listening on " << server_data->server_address << "\n";
+
+  packet_in_mgr = new StreamChannelClientMgr(
+    &server_data->pi_service, server_data->cq_.get());
+
+  auto packet_io = [](StreamChannelClientMgr *mgr) {
+    while (mgr->next()) { }
+  };
+
+  server_data->packetin_thread = std::thread(packet_io, packet_in_mgr);
+}
+
 }

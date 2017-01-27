@@ -65,7 +65,7 @@ class DeviceMgrImp {
 
   explicit DeviceMgrImp(device_id_t device_id)
       : device_id(device_id),
-        device_tgt({static_cast<pi_dev_id_t>(device_id), 0xff}) { }
+        device_tgt({static_cast<pi_dev_id_t>(device_id), 0xffff}) { }
 
   ~DeviceMgrImp() {
     pi_remove_device(device_id);
@@ -108,8 +108,9 @@ class DeviceMgrImp {
       return status;
     }
     p4_change(p4info_tmp);
-    pi_status = pi_assign_device(device_id, p4info.get(),
-                                 assign_options.data());
+    // pi_status = pi_assign_device(device_id, p4info.get(),
+    //                              assign_options.data());
+    pi_status = PI_STATUS_SUCCESS;
     if (pi_status != PI_STATUS_SUCCESS) {
       status.set_code(Code::UNKNOWN);
       return status;
