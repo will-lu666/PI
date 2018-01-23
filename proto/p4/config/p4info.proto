@@ -115,7 +115,14 @@ message Table {
   // added in the future
   repeated uint32 direct_resource_ids = 7;
   int64 size = 8;  // max number of entries in table
-  bool with_entry_timeout = 9;  // entry ageing is enabled for table
+  // this enum can be extended in the future with other behaviors, such as
+  // "HARD_EVICTION"
+  enum IdleTimeoutBehavior {
+    NO_TIMEOUT = 0;
+    NOTIFY_CONTROL = 1;
+  }
+  // is idle timeout supported for this table?
+  IdleTimeoutBehavior idle_timeout_behavior = 9;
 }
 
 // used to list all possible actions in a Table

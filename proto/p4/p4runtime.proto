@@ -163,6 +163,12 @@ message TableEntry {
   // default action of the table. If true, the "match" field must be empty and
   // the "action" field must be populated with a valid direct action.
   bool is_default_action = 8;
+  int64 idle_timeout = 9;  // in microseconds
+  // Table wite: this field should be left unset
+  // Table read: if the table supports idle timeout, this field will be set to
+  // the time elapsed - in microseconds - since the table entry was last "hit"
+  // as part of a dataplane table lookup.
+  int64 time_since_last_hit = 10;  // in microseconds
 }
 
 // field_match_type ::= exact | ternary | lpm | range | valid
@@ -376,6 +382,7 @@ message StreamMessageResponse {
   oneof update {
     MasterArbitrationUpdate arbitration = 1;
     PacketIn packet = 2;
+    IdleTimeoutNotification idle_timeout_notification = 3;
   }
 }
 
@@ -410,6 +417,10 @@ message MasterArbitrationUpdate {
   // an error status for all other connected clients (at every mastership
   // change). The controller does not populate this field.
   .google.rpc.Status status = 3;
+}
+
+message IdleTimeoutNotification {
+  TableEntry table_entry = 1;
 }
 
 message Uint128 {
