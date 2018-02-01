@@ -3,8 +3,8 @@
 **Contributors:**
 Yavuz Yetim, Antonin Bas, Waqar Mohsin, Tom Everman, Samar Abdi, Sunghwan Yoo
 
-**Date:**
-October 2nd, 2017
+**Last Updated:**
+February 02, 2017
 
 **Version:**
 0.1: This is a WIP draft and we will improve other issues such as sharding.
@@ -338,47 +338,73 @@ should take into account the top-level message and act as follows:
 
 ## Error reporting
 
-When the p4.Write() fails for some reason, P4 Runtime returns `grpc::Status` to
-report errors. `grpc::Status` has a top-level canonical `error_code` that
-represents a RPC-wide error, along with an `error_details` field which is a
-serialized `google.rpc.Status` that contains per-entity level errors.
-`google.rpc.Status` will have multiple `p4.Error` messages in the repeated
-`details` field, each representing a per-entity error for that update in the
-WriteRequest batch.
+P4 Runtime is based on gRPC and all RPCs return a status to indicate
+success or failure. gRPC supports multiple language bindings; we use
+C++ binding below to explain how error reporting works in the failure case.
 
-The `p4.Error` message has a gRPC canonical error space to report P4 Runtime
-errors.  Additionally, `p4.Error` also allows different vendors / chipmakers to
-express their own error codes in their chosen error-space.
+gRPC uses [grpc::Status](https://github.com/grpc/grpc/blob/master/include/grpc%2B%2B/impl/codegen/status.h)
+class to represent the status returned by an RPC. It has 3 attributes:
+- `StatusCode code_;`
+- `grpc::string error_message_;`
+- `grpc::string binary_error_details_;`
 
+The `code_` respresents a *canonical error* (see
+[StatusCode](https://github.com/grpc/grpc/blob/master/include/grpc%2B%2B/impl/codegen/status_code_enum.h)
+or [grpc_status_code](https://github.com/grpc/grpc/blob/master/include/grpc/impl/codegen/status.h)
+for full list), and describes the *overall* RPC status. The `error_message_` is a
+deverloper-facing error message, which should be in English. The `binary_error_details_`
+carries a serialized
+[google.rpc.Status](https://github.com/grpc/grpc/blob/master/src/proto/grpc/status/status.proto)
+message, which has 3 fields:
+- `int32 code = 1;`     (see [code.proto](https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto))
+- `string message = 2;`
+- `repeated google.protobuf.Any details = 3;`
+
+The `code` and `message` fields must be the same as `code_` and `error_message_`
+fields from `grpc::Status` above. The `details` field is a list that consists of
+`p4.Error` messages that carry error details for individual elements inside
+batch-request RPCs (e.g. `Write` and `Read`). The `p4.Error` supports different
+target vendors to additionally express their own error codes in their chosen
+error-space.
+
+
+
+The diagram below illustrates how these messages fit together.
 ![P4 Runtime Error Proto](p4-runtime-error-proto.svg)
 
-P4 Runtime will populate grpc::Status as follows:
+gRPC provides utility functions `ExtractErrorDetails` and `SetErrorDetails`
+(see [error_details.h](https://github.com/grpc/grpc/blob/master/include/grpc%2B%2B/support/error_details.h))
+to easily convert between `grpc::Status` and `google.rpc.Status`.
 
-1. If all batch updates succeeded, set top-level `error_code` to OK and do not
+## Write RPC Error Reporting
+P4 Runtime server will populate grpc::Status as follows:
+
+1. If all batch updates succeeded, set grpc::Status `code_` to OK and do not
    populate any other field.
 
 2. If an error is encountered before even trying to attempt individual batch
-   updates, set a top-level `error_code` that best describes that RPC-wide
+   updates, set grpc::Status `code_` that best describes that RPC-wide
    error.  For example, use `UNAVAILABLE` if the P4Runtime service is not yet
-   ready to handle requests. Do not set `error_details` in this case.
+   ready to handle requests. Set `error_message_` to describe the issue.
+   Do not set `error_details` in this case.
 
-3. Use the `UNKNOWN` top level error code for all Write operation failures,
-   whether partial or total batch failures. For example, one operation in the
+3. Otherwise, if one or more updates in the batch (`WriteRequest.updates`) failed, set
+   the grpc::Status `code` to `UNKNOWN`. For example, one update in the
    batch may fail with `RESOURCE_EXHAUSTED` and another with `INVALID_ARGUMENT`.
-   The 2nd level (`google.rpc.Status`) error `code` and `message` should be the
-   same as the top-level canonical `error_code` and `error_message`.
-   The number of `p4.Error` messages packed in the `details` field should always
-   match the number of `updates` in the `p4.WriteRequest`.
+   A `p4.Error` message is used to capture the status of *each and every* update
+   in the batch. The number of `p4.Error` messages packed into `google.rpc.Status.details`
+   field should therefore always match the number of `updates` in the `WriteRequest`.
+   If some of the updates were successful, the corresponding `p4.Error` should set the
+   code to `OK` and omit other fields.
 
 ```
-# Example of an error message returned for a batched Write with 3 updates. The
-# first and third updates encountered an error, while the second update
+# Example of a grpc::Status returned for a Write RPC with a batch of 3 updates.
+# The first and third updates encountered an error, while the second update
 # succeeded.
 
-{
-  error_code: 2  # UNKNOWN
-  error_message: "Write failure."
-  error_details {
+  code_ = 2  # UNKNOWN
+  error_message_ = "Write failure."
+  binary_error_details {
     code: 2  # UNKNOWN
     message: "Write failure."
     details {
@@ -397,9 +423,30 @@ P4 Runtime will populate grpc::Status as follows:
       code: 600  # ERR_ENITTY_ALREADY_EXISTS
     }
   }
-}
 
 ```
+
+## Read RPC Error Reporting
+`ReadRequest.entities` is a list that allows a batch read of multiple P4 entities.
+An entity could be:
+- Fully-specified: This maps to exactly *one* entity returned
+- Wild-carded: Each P4 entity has associated semantics for wild-card reading.
+  For example, setting `CounterEntry.counter_id=0` in the request maps to reading
+  all counter entries for all indirect counters.
+
+As a result, a *Read* RPC does not always have 1:1 correspondence between the elements
+in the request and the elements in the response.
+
+The *Read* RPC supports a batch of entities to be read by specifi
+
+1. If all entities requested in the batch were read successfully, set grpc::Status
+   `code_` to OK and do not populate any other field.
+2. If there were errors encountered while handling one or more entities (note: the
+   server is expected to try all entities in the request), 
+
+NOTE: ReadResponse will be empty.
+
+TODO
 
 ### Examples of p4.Error canonical code usage
 
