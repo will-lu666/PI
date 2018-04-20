@@ -248,7 +248,7 @@ p4::config::P4Info DeviceMgrTest::p4info_proto;
 constexpr const char *DeviceMgrTest::invalid_p4_id_error_str;
 
 TEST_F(DeviceMgrTest, ResourceTypeFromId) {
-  using Type = pi::proto::util::P4ResourceType;
+  using Type = p4::config::P4Ids;
   using pi::proto::util::resource_type_from_id;
   auto a_id = pi_p4info_action_id_from_name(p4info, "actionA");
   ASSERT_EQ(Type::ACTION, resource_type_from_id(a_id));
@@ -260,7 +260,7 @@ TEST_F(DeviceMgrTest, ResourceTypeFromId) {
   ASSERT_EQ(Type::COUNTER, resource_type_from_id(c_id));
   auto m_id = pi_p4info_meter_id_from_name(p4info, "ExactOne_meter");
   ASSERT_EQ(Type::METER, resource_type_from_id(m_id));
-  ASSERT_EQ(Type::INVALID,
+  ASSERT_EQ(Type::UNSPECIFIED,
             resource_type_from_id(pi::proto::util::invalid_id()));
 }
 
